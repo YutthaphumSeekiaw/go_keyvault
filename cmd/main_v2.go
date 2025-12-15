@@ -4,7 +4,9 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/rsa"
+	"crypto/x509"
 	"encoding/base64"
+	"encoding/pem"
 	"fmt"
 	"log"
 	"math/big"
@@ -218,6 +220,78 @@ func SimulateBotMessage(plaintext string, botPrivKey *rsa.PrivateKey, kkpPubKey 
 	jweObj, err := encrypter.Encrypt([]byte(jwsStr))
 	if err != nil {
 		return "", err
+	}
+
+	return jweObj.CompactSerialize()
+}
+
+func DecryptWithSecret(ctx context.Context, client *akv.Client, jweStr string, secretName string) ([]byte, error) {
+	// 1. Fetch the Private Key from AKV Secret
+	// This downloads the actual key material to your app
+	privateKeyPEM, err := client.GetSecret(ctx, secretName)
+	if err != nil {
+		return nil, err
+	}
+
+	// 2. Parse the Private Key (assuming it's stored as PEM)
+	block, _ := pem.Decode([]byte(privateKeyPEM))
+	if block == nil {
+		return nil, fmt.Errorf("failed to parse PEM block")
+	}
+
+	// Parse PKCS1 or PKCS8 depending on your key format
+	privateKey, err := x509.ParsePKCS1PrivateKey(block.Bytes)
+	if err != nil {
+		return nil, err
+	}
+
+	// 3. Parse the JWE
+	jweObj, err := jose.ParseEncrypted(jweStr)
+	if err != nil {
+		return nil, err
+	}
+
+	decryptedPayload, err := jweObj.Decrypt(privateKey)
+	if err != nil {
+		return nil, err
+	}
+
+	return decryptedPayload, nil
+}
+
+func EncryptWithSecret(ctx context.Context, client *akv.Client, plaintext []byte, secretName string) (string, error) {
+	// 1. Fetch the Public Key from AKV Secret
+	pubKeyPEM, err := client.GetSecret(ctx, secretName)
+	if err != nil {
+		return "", fmt.Errorf("failed to get secret: %w", err)
+	}
+
+	// 2. Parse PEM
+	block, _ := pem.Decode([]byte(pubKeyPEM))
+	if block == nil {
+		return "", fmt.Errorf("failed to parse PEM block")
+	}
+
+	// 3. Parse RSA Public Key
+	pubKey, err := x509.ParsePKIXPublicKey(block.Bytes)
+	if err != nil {
+		// Try PKCS1 if PKIX fails
+		if pk, err2 := x509.ParsePKCS1PublicKey(block.Bytes); err2 == nil {
+			pubKey = pk
+		} else {
+			return "", fmt.Errorf("failed to parse public key: %w", err)
+		}
+	}
+
+	// 4. Encrypt LOCALLY
+	encrypter, err := jose.NewEncrypter(jose.A256GCM, jose.Recipient{Algorithm: jose.RSA_OAEP_256, Key: pubKey}, nil)
+	if err != nil {
+		return "", fmt.Errorf("failed to create encrypter: %w", err)
+	}
+
+	jweObj, err := encrypter.Encrypt(plaintext)
+	if err != nil {
+		return "", fmt.Errorf("failed to encrypt: %w", err)
 	}
 
 	return jweObj.CompactSerialize()
