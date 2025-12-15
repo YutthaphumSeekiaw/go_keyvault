@@ -43,7 +43,7 @@ func (e *AkvKeyEncrypter) Algs() []jose.KeyAlgorithm {
 	return []jose.KeyAlgorithm{jose.RSA_OAEP_256, jose.RSA_OAEP}
 }
 
-func (e *AkvKeyEncrypter) EncryptKey(cek []byte, alg jose.KeyAlgorithm) (jose.Recipient, error) {
+func (e *AkvKeyEncrypter) EncryptKey(cek []byte, alg jose.KeyAlgorithm) (*jose.Recipient, error) {
 	var akvAlg azkeys.JSONWebKeyEncryptionAlgorithm
 	switch alg {
 	case jose.RSA_OAEP_256:
@@ -51,17 +51,17 @@ func (e *AkvKeyEncrypter) EncryptKey(cek []byte, alg jose.KeyAlgorithm) (jose.Re
 	case jose.RSA_OAEP:
 		akvAlg = azkeys.JSONWebKeyEncryptionAlgorithmRSAOAEP
 	default:
-		return jose.Recipient{}, fmt.Errorf("unsupported algorithm: %s", alg)
+		return nil, fmt.Errorf("unsupported algorithm: %s", alg)
 	}
 
 	encryptedKey, err := e.Client.Encrypt(context.Background(), e.KeyName, akvAlg, cek)
 	if err != nil {
-		return jose.Recipient{}, err
+		return nil, err
 	}
 
 	// Store the encrypted key in the 'Key' field.
 	// go-jose will use this to populate the JWE's encrypted_key field.
-	return jose.Recipient{
+	return &jose.Recipient{
 		Algorithm: alg,
 		KeyID:     e.kid,
 		Key:       encryptedKey,
